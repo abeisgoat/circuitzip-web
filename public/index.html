@@ -1,0 +1,153 @@
+<div id="statusRow">
+  <button id="connectBtn" onclick="pair()">Pair</button>
+</div>
+
+<style>
+  body {
+    padding: 0;
+    margin: 0;
+  }
+  #statusRow {
+    background-color: rgba(0, 0, 0, 0.1);
+    padding: 6px;
+  }
+</style>
+
+<div id="page"></div>
+
+
+<script>
+const baud = 115200;
+
+
+class EasyPort {
+  reader = false;
+  writer = false;
+  port = false;
+
+  setPort(port) {this.port = port;}
+
+  async connect() {
+    await this.port.open({ baudRate: baud });
+    console.log(`Connected @ ${baud} baud`, 'sys');
+  }
+
+  async disconnect() {
+    if (this.reader) {
+      await this.reader.cancel().catch(console.warn);
+      this.reader.releaseLock();
+      this.reader = null;
+    }
+    if (this.writer) {
+      await this.writer.close().catch(console.warn);
+      this.writer.releaseLock();
+      this.writer = null;
+    }
+    if (this.readPipe) {
+      await this.readPipe.catch(console.warn);
+      this.readPipe = null;
+    }
+    if (this.writePipe) {
+      await this.writePipe.catch(console.warn);
+      this.writePipe = null;
+    }
+    await this.port.close();
+  }
+
+  async write(text) {
+    console.log(">", text);
+    try {
+      if (!this.writer) {
+        const enc = new TextEncoderStream();
+        this.writePipe = enc.readable.pipeTo(this.port.writable);
+        this.writer = enc.writable.getWriter();
+      }
+      await this.writer.write(text + '\n');
+    } catch(e) { console.log('Send error: ' + e.message, 'err'); }
+  }
+
+  async stream() {
+    const decoder = new TextDecoderStream();
+    this.readPipe = this.port.readable.pipeTo(decoder.writable);
+    this.reader = decoder.readable.getReader();
+
+    let buf = "";
+    while (true) {
+      const {value, done} = await this.reader.read();
+      if (done) break;
+      buf += value;
+
+      if (buf.endsWith("\r\n\r\n")) {
+        // console.log(buf);
+        const chunks = buf.split("\r\n");
+        const headers = parseHeaders(chunks[0]);
+        // console.log(chunks.slice(1))
+        const body = chunks.slice(1).join("\r\n").trim();
+        // console.log({headers, body})
+
+        console.log(`[${body.length} bytes]`);
+        document.getElementById('page').innerHTML = body;
+        buf = "";
+      }
+    }
+  }
+}
+
+window.ezport = new EasyPort();
+
+route = () => ezport.write("GET " + document.location.hash.slice(1));
+addEventListener("hashchange", route)
+
+window.addEventListener('load', async () => {
+  const ports = await navigator.serial.getPorts();
+  if (ports.length > 0) {
+    console.log("Found previously connected devices.");
+    ezport.setPort(ports[0]);
+    await ezport.connect()
+    ezport.stream();
+    route();
+  }
+});
+
+
+
+async function pair () {
+  port = await navigator.serial.requestPort({
+    filters: [{
+      usbVendorId: 0x2e8a
+    }]
+  });
+
+  ezport.setPort(port);
+  await ezport.connect();
+  ezport.stream();
+  route();
+}
+
+function parseHeaders(rawHeaders) {
+  const headersObject = {};
+  if (!rawHeaders) return headersObject;
+
+  // Split lines by carriage return and newline
+  const lines = rawHeaders.trim().split(/\r?\n/);
+
+  for (const line of lines) {
+    const index = line.indexOf(':');
+    if (index === -1) continue;
+
+    const key = line.slice(0, index).trim().toLowerCase();
+    const value = line.slice(index + 1).trim();
+
+    // Handle multi-value fields (like Set-Cookie)
+    if (headersObject[key]) {
+      headersObject[key] = Array.isArray(headersObject[key])
+              ? [...headersObject[key], value]
+              : [headersObject[key], value];
+    } else {
+      headersObject[key] = value;
+    }
+  }
+
+  return headersObject;
+}
+</script>
