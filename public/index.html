@@ -1,154 +1,115 @@
-<div id="statusRow">
-  <button id="connectBtn" onclick="pair()">Pair</button>
-</div>
+<html>
+  <body>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,100..900;1,100..900&display=swap"
+      rel="stylesheet"
+    />
 
-<style>
-  body {
-    padding: 0;
-    margin: 0;
-  }
-  #statusRow {
-    background-color: rgba(0, 0, 0, 0.1);
-    padding: 6px;
-  }
-</style>
+    <style>
+      body {
+        padding: 0;
+        margin: 0;
+        display: grid;
+        grid-template-areas: "bar" "content";
+        grid-template-rows: fit-content(100%) 1fr;
+        background-color: rgba(0, 0, 0, 0.1);
 
-<div id="page"></div>
-
-
-<script>
-const baud = 115200;
-
-
-class EasyPort {
-  reader = false;
-  writer = false;
-  port = false;
-
-  setPort(port) {this.port = port;}
-
-  async connect() {
-    await this.port.open({ baudRate: baud });
-    console.log(`Connected @ ${baud} baud`, 'sys');
-  }
-
-  async disconnect() {
-    if (this.reader) {
-      await this.reader.cancel().catch(console.warn);
-      this.reader.releaseLock();
-      this.reader = null;
-    }
-    if (this.writer) {
-      await this.writer.close().catch(console.warn);
-      this.writer.releaseLock();
-      this.writer = null;
-    }
-    if (this.readPipe) {
-      await this.readPipe.catch(console.warn);
-      this.readPipe = null;
-    }
-    if (this.writePipe) {
-      await this.writePipe.catch(console.warn);
-      this.writePipe = null;
-    }
-    await this.port.close();
-  }
-
-  async write(text) {
-    console.log(">", text);
-    try {
-      if (!this.writer) {
-        const enc = new TextEncoderStream();
-        this.writePipe = enc.readable.pipeTo(this.port.writable);
-        this.writer = enc.writable.getWriter();
+        font-family: "Noto Sans", sans-serif;
+        font-optical-sizing: auto;
+        font-style: normal;
+        font-variation-settings: "wdth" 100;
+        font-size: 0.9rem;
       }
-      await this.writer.write(text + '\n');
-    } catch(e) { console.log('Send error: ' + e.message, 'err'); }
-  }
-
-  async stream() {
-    const decoder = new TextDecoderStream();
-    this.readPipe = this.port.readable.pipeTo(decoder.writable);
-    this.reader = decoder.readable.getReader();
-
-    let buf = "";
-    while (true) {
-      const {value, done} = await this.reader.read();
-      if (done) break;
-      buf += value;
-
-      if (buf.endsWith("\r\n\r\n")) {
-        // console.log(buf);
-        const chunks = buf.split("\r\n");
-        const headers = parseHeaders(chunks[0]);
-        // console.log(chunks.slice(1))
-        const body = chunks.slice(1).join("\r\n").trim();
-        // console.log({headers, body})
-
-        console.log(`[${body.length} bytes]`);
-        document.getElementById('page').innerHTML = body;
-        buf = "";
+      #page {
+        grid-area: content;
       }
-    }
-  }
-}
+      #bar {
+        background-color: black;
+        color: white;
+        padding: 0.5rem 0.75rem;
+        margin: 5px 5px 0px 5px;
+        border-radius: 10px;
+        display: grid;
+        grid-template-columns: fit-content(100%) 1fr fit-content(100%);
+        grid-gap: 10px;
 
-window.ezport = new EasyPort();
+        #bar-bubble {
+          border-radius: 100%;
+          width: 15px;
+          height: 15px;
+          align-self: center;
+          background-color: yellow;
+          &.connected {
+            background-color: green;
+          }
+          &.disconnected {
+            background-color: red;
+          }
+        }
+        #bar-info {
+          font-size: 0.8rem;
+          opacity: 0.5;
+          align-self: center;
+        }
+      }
+      #statusModal {
+        background-color: rgba(0, 0, 0, 0.1);
+        padding: 6px;
+        width: 400px;
+        grid-gap: 10px;
+        align-self: center;
+        justify-self: center;
+        border-radius: 10px;
+        box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(0, 0, 0, 0.3);
+        display: grid;
+        text-align: center;
+        grid-template-rows: fit-content(100%) 1fr fit-content(100%);
+        grid-area: content;
+        z-index: 1;
+        display: none;
+      }
+      #statusModal h1 {
+        margin: 0;
+        padding: 5px;
+        border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+      }
+      #statusModal p {
+        padding: 0px;
+        margin: 0px;
+      }
+      #statusModal button {
+        padding: 10px;
+      }
+      #statusModal small {
+        opacity: 0.7;
+      }
+    </style>
 
-route = () => ezport.write("GET " + document.location.hash.slice(1));
-addEventListener("hashchange", route)
+    <div id="bar">
+      <div id="bar-bubble"></div>
+      <div id="bar-status">Please connect a Circuit.zip device.</div>
+      <div id="bar-info">
+        <span id="bar-bytes-transferred">0b</span> transferred
+      </div>
+    </div>
+    <div id="statusModal">
+      <h1>CIRCUIT.ZIP</h1>
+      <p>
+        Hello, welcome to Circuit.zip! This page is a portal to web apps hosted
+        on your Circuit.zip device.<br /><br />
+        Connect your device via USB then pair to browse your apps.
+      </p>
+      <button id="connectBtn" onclick="pair()">Pair Device</button>
+      <small
+        >Don't have a Circuit.zip device?
+        <a href="https://github.com">Go make one!</a></small
+      >
+    </div>
+    <div id="page"></div>
 
-window.addEventListener('load', async () => {
-  const ports = await navigator.serial.getPorts();
-  if (ports.length > 0) {
-    console.log("Found previously connected devices.");
-    //TODO: Use handshake to check when multiple ports are paired
-    ezport.setPort(ports[1]);
-    await ezport.connect()
-    ezport.stream();
-    route();
-  }
-});
-
-
-
-async function pair () {
-  port = await navigator.serial.requestPort({
-    filters: [{
-      usbVendorId: 0x2e8a
-    }]
-  });
-
-  ezport.setPort(port);
-  await ezport.connect();
-  ezport.stream();
-  route();
-}
-
-function parseHeaders(rawHeaders) {
-  const headersObject = {};
-  if (!rawHeaders) return headersObject;
-
-  // Split lines by carriage return and newline
-  const lines = rawHeaders.trim().split(/\r?\n/);
-
-  for (const line of lines) {
-    const index = line.indexOf(':');
-    if (index === -1) continue;
-
-    const key = line.slice(0, index).trim().toLowerCase();
-    const value = line.slice(index + 1).trim();
-
-    // Handle multi-value fields (like Set-Cookie)
-    if (headersObject[key]) {
-      headersObject[key] = Array.isArray(headersObject[key])
-              ? [...headersObject[key], value]
-              : [headersObject[key], value];
-    } else {
-      headersObject[key] = value;
-    }
-  }
-
-  return headersObject;
-}
-</script>
+    <script src="serial.js"></script>
+  </body>
+</html>

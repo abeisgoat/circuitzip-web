@@ -1,0 +1,89 @@
+<html>
+  <script src="htmx.org@4.0.0-beta5.js"></script>
+<!--  <link href="prism.css" rel="stylesheet" />-->
+<!--  <script src="prism.js"></script>-->
+<!--  <style>-->
+<!--    pre, code{-->
+<!--      font-size: 12px;-->
+<!--    }-->
+<!--    pre.language-lua {-->
+<!--      padding: 10px;-->
+<!--    }-->
+<!--  </style>-->
+  <style>
+    [content] {
+      display: grid;
+    }
+    [content] textarea {
+      height: 300px;
+      resize: none;
+    }
+    [row] {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+    }
+  </style>
+  <script>
+    const registerServiceWorker = async () => {
+      if (!("serviceWorker" in navigator)) {
+        console.warn("No service worker support.");
+        return;
+      }
+
+      const sw = navigator.serviceWorker;
+
+      sw.addEventListener("message", (event) => {
+        const pathname = new URL(event.data.url).pathname;
+        console.log(event.data);
+
+        event.data.body.text().then((text) => {
+          text && console.log(text);
+        })
+
+        event.target.controller.postMessage({
+          url: event.data.url,
+          body: `This is content for ${pathname}`,
+        });
+      });
+
+      const registration = await sw.register("/sw.js", {
+        scope: "/",
+      });
+
+      if (registration.installing) {
+        console.log("Service worker installing");
+      } else if (registration.waiting) {
+        console.log("Service worker installed");
+      } else if (registration.active) {
+        console.log("Service worker active");
+      }
+    };
+
+    registerServiceWorker();
+  </script>
+  <body>
+    <div content>
+      <div row>
+        <button
+          hx-get="/_/main.lua"
+          hx-swap="textContent"
+          hx-target="next textarea"
+        >
+          Load main.lua
+        </button>
+        <button
+                hx-post="/_/main.lua"
+                hx-alert="Saved!"
+                hx-swap="none"
+                hx-include="[name='value']"
+        >
+          Save main.lua
+        </button>
+      </div>
+      <textarea name="value"></textarea>
+<!--      <img src="https://jpg.cool/fish.gif" /><br />-->
+    </div>
+    <br />
+    <span hx-get="/_/hello.txt" hx-trigger="load"></span>
+  </body>
+</html>

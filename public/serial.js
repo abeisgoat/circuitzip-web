@@ -1,0 +1,225 @@
+const baud = 115200;
+
+class HTTPort {
+  reader = false;
+  writer = false;
+  port = false;
+  bytesTransferred = 0;
+
+  onRoute = () => {};
+
+  setPort(port) {
+    this.port = port;
+  }
+
+  async connect() {
+    await this.port.open({ baudRate: baud });
+    console.log(`Connected @ ${baud} baud`, "sys");
+  }
+
+  async disconnect() {
+    if (this.reader) {
+      await this.reader.cancel().catch(console.warn);
+      this.reader.releaseLock();
+      this.reader = null;
+    }
+    if (this.writer) {
+      await this.writer.close().catch(console.warn);
+      this.writer.releaseLock();
+      this.writer = null;
+    }
+    if (this.readPipe) {
+      await this.readPipe.catch(console.warn);
+      this.readPipe = null;
+    }
+    if (this.writePipe) {
+      await this.writePipe.catch(console.warn);
+      this.writePipe = null;
+    }
+    this.onRoute = () => {};
+    await this.port.close();
+  }
+
+  async write(text) {
+    console.log(">", text);
+    try {
+      if (!this.writer) {
+        const enc = new TextEncoderStream();
+        this.writePipe = enc.readable.pipeTo(this.port.writable);
+        this.writer = enc.writable.getWriter();
+      }
+      await this.writer.write(text + "\n");
+    } catch (e) {
+      console.log("Send error: " + e.message, "err");
+    }
+  }
+
+  async _updateLog(body) {
+    this.bytesTransferred += body.length;
+    let byteMsg = "";
+    const b = 1024;
+    const kb = 1024 * 1024;
+    const mb = 1024 * 1024 * 1024;
+    if (this.bytesTransferred < b) {
+      byteMsg = `${this.bytesTransferred}b`;
+    } else if (this.bytesTransferred < kb) {
+      byteMsg = `${(this.bytesTransferred / b).toFixed(1)}kb`;
+    } else if (this.bytesTransferred < mb) {
+      byteMsg = `${(this.bytesTransferred / kb).toFixed(1)}mb`;
+    }
+    document.querySelector("#bar-bytes-transferred").innerText = byteMsg;
+  }
+
+  prepareNextResponse() {
+    this.nextResponse = new Promise((resolve, reject) => {
+      this._resolveNextResponse = resolve;
+      this._rejectNextResponse = reject;
+    });
+    this.nextResponse.then(this.onRoute);
+    this.nextResponse.then(this._updateLog.bind(this));
+  }
+
+  async stream() {
+    const decoder = new TextDecoderStream();
+    this.readPipe = this.port.readable.pipeTo(decoder.writable);
+    this.reader = decoder.readable.getReader();
+
+    let buf = "";
+    this.prepareNextResponse();
+
+    while (true) {
+      const { value, done } = await this.reader.read();
+      if (done) break;
+      buf += value;
+
+      if (buf.endsWith("\r\n\r\n")) {
+        const chunks = buf.split("\r\n");
+        const headers = parseHeaders(chunks[0]);
+        const body = chunks.slice(1).join("\r\n").trim();
+
+        console.log(`[${body.length} bytes]`);
+        this._resolveNextResponse(body);
+        this.prepareNextResponse();
+        buf = "";
+      }
+    }
+
+    console.log("Stream closed.");
+  }
+
+  route(method, path) {
+    this.write(`${method} ${path}`);
+    return this.nextResponse;
+  }
+}
+
+window.httport = new HTTPort();
+
+route = () => {
+  if (document.location.hash === "") {
+    document.location.hash = "/";
+  } else {
+    httport.route("GET", document.location.hash.slice(1));
+  }
+};
+addEventListener("hashchange", route);
+
+async function timer(ms) {
+  return new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Operation timed out after ${ms}ms`));
+    }, ms);
+  });
+}
+
+async function watch() {
+  const ports = await navigator.serial.getPorts();
+
+  if (ports.length > 0) {
+    console.log("Port attached");
+    console.log(ports);
+
+    for (let portIndex in ports) {
+      console.log(`Trying port ${portIndex}`);
+      try {
+        httport.setPort(ports[portIndex]);
+        await httport.connect();
+      } catch (e) {
+        console.log(`${e} on ${portIndex}`);
+      }
+
+      const stream = httport.stream();
+
+      let ok;
+      httport.onRoute = () => {};
+      httport.prepareNextResponse();
+      ok = await Promise.race([
+        httport.route("GET", "/_/heartbeat"),
+        timer(100),
+      ]).catch((e) => {
+        console.log(e);
+      });
+
+      console.log("Ok! ==", ok);
+      if (ok !== "Ok!") {
+        httport.disconnect();
+      } else {
+        httport.onRoute = (body) => {
+          document.getElementById("page").innerHTML = body;
+        };
+        httport.prepareNextResponse();
+
+        route();
+        stream.catch((e) => {
+          console.warn(e);
+          console.log("Stream catch, device disconnected?");
+          setTimeout(watch, 1000);
+          // document.querySelector("#page").innerHTML = "";
+          // document.querySelector('#statusModal').style.display = 'grid';
+        });
+        break;
+      }
+    }
+  } else {
+    console.log("No ports found, trying again in 1s");
+    setTimeout(watch, 1000);
+  }
+}
+
+watch();
+
+async function pair() {
+  await navigator.serial.requestPort({
+    filters: [
+      {
+        usbVendorId: 0x2e8a,
+      },
+    ],
+  });
+}
+
+function parseHeaders(rawHeaders) {
+  const headersObject = {};
+  if (!rawHeaders) return headersObject;
+
+  // Split lines by carriage return and newline
+  const lines = rawHeaders.trim().split(/\r?\n/);
+
+  for (const line of lines) {
+    const index = line.indexOf(":");
+    if (index === -1) continue;
+
+    const key = line.slice(0, index).trim().toLowerCase();
+    const value = line.slice(index + 1).trim();
+
+    if (headersObject[key]) {
+      headersObject[key] = Array.isArray(headersObject[key])
+        ? [...headersObject[key], value]
+        : [headersObject[key], value];
+    } else {
+      headersObject[key] = value;
+    }
+  }
+
+  return headersObject;
+}
