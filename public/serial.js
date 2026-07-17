@@ -41,7 +41,7 @@ class HTTPort {
   }
 
   async write(text) {
-    console.log(">", text);
+    console.log(">", text.trim());
     try {
       if (!this.writer) {
         const enc = new TextEncoderStream();
@@ -84,23 +84,60 @@ class HTTPort {
     this.readPipe = this.port.readable.pipeTo(decoder.writable);
     this.reader = decoder.readable.getReader();
 
-    let buf = "";
+
     this.prepareNextResponse();
+
+    let status,
+        headers,
+        headerOffset = 0,
+        buf = "";
 
     while (true) {
       const { value, done } = await this.reader.read();
-      if (done) break;
+      if (done) {
+        console.log("Stream reported done.");
+        break;
+      }
       buf += value;
 
-      if (buf.endsWith("\r\n\r\n")) {
-        const chunks = buf.split("\r\n");
-        const headers = parseHeaders(chunks[0]);
-        const body = chunks.slice(1).join("\r\n").trim();
+      const chunks = buf.split(/\r\n\r\n/);
+      // console.log(chunks);
+      if (chunks.length === 2) {
+        if (!headerOffset) {
+          // console.log("setting header offset");
+          const protocolLines = chunks[0].split("\n");
+          status = protocolLines[0];
+          headers = parseHeaders(protocolLines.slice(1).join("\n"))
+          headerOffset = chunks[0].length + 4; // Plus 4 for \r\n\r\n
+        }
 
-        console.log(`[${body.length} bytes]`);
-        this._resolveNextResponse(body);
-        this.prepareNextResponse();
-        buf = "";
+        if (headerOffset) {
+          const body = buf.slice(headerOffset);
+          const bodyLength = new TextEncoder().encode(body).length;
+          const contentLength = parseInt(headers["content-length"], 10);
+          const newlineCount = (body.match(new RegExp("\r\n", "gi")) || []).length;
+
+          if (bodyLength-newlineCount === contentLength) {
+            // console.log(status, headers, body);
+            console.log(`[${status} ${body.length} bytes]`);
+            this._resolveNextResponse(body.trim());
+            this.prepareNextResponse();
+
+
+            buf = "";
+            status = undefined;
+            headers = undefined;
+            headerOffset = 0;
+          }
+        }
+        // else if (headerOffset) {
+        //   console.log("--------------");
+        //   console.log(buf);
+        //   console.log(headerOffset);
+        //   console.log(buf.slice(headerOffset));
+        //   console.log(buf.slice(headerOffset).length);
+        //   console.log("--------------");
+        // }
       }
     }
 
@@ -108,7 +145,7 @@ class HTTPort {
   }
 
   route(method, path) {
-    this.write(`${method} ${path}`);
+    this.write(`${method} ${path}\n\n`);
     return this.nextResponse;
   }
 }
@@ -162,6 +199,7 @@ async function watch() {
 
       console.log("Ok! ==", ok);
       if (ok !== "Ok!") {
+        console.log("Ok! mismatch, disconnecting!");
         httport.disconnect();
       } else {
         httport.onRoute = (body) => {
