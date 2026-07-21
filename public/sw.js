@@ -28,12 +28,11 @@ self.addEventListener("fetch", (event) => {
             resolve: requestPromiseResolve,
           };
 
-
-            client.postMessage({
-                url: event.request.url,
-                method: event.request.method,
-                body: await event.request.blob()
-            });
+          client.postMessage({
+            url: event.request.url,
+            method: event.request.method,
+            body: await event.request.blob(),
+          });
         }
 
         const body = await requests[event.request.url].promise;

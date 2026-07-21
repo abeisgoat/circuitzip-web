@@ -81,13 +81,12 @@ class HTTPort {
     this.readPipe = this.port.readable.pipeTo(decoder.writable);
     this.reader = decoder.readable.getReader();
 
-
     this.prepareNextResponse();
 
     let status,
-        headers,
-        headerOffset = 0,
-        buf = "";
+      headers,
+      headerOffset = 0,
+      buf = "";
 
     while (true) {
       const { value, done } = await this.reader.read();
@@ -104,7 +103,7 @@ class HTTPort {
           // console.log("setting header offset");
           const protocolLines = chunks[0].split("\n");
           status = protocolLines[0];
-          headers = parseHeaders(protocolLines.slice(1).join("\n"))
+          headers = parseHeaders(protocolLines.slice(1).join("\n"));
           headerOffset = chunks[0].length + 4; // Plus 4 for \r\n\r\n
         }
 
@@ -112,9 +111,10 @@ class HTTPort {
           const body = buf.slice(headerOffset);
           const bodyLength = new TextEncoder().encode(body).length;
           const contentLength = parseInt(headers["content-length"], 10);
-          const newlineCount = (body.match(new RegExp("\r\n", "gi")) || []).length;
+          const newlineCount = (body.match(new RegExp("\r\n", "gi")) || [])
+            .length;
 
-          if (bodyLength-newlineCount === contentLength) {
+          if (bodyLength - newlineCount === contentLength) {
             // console.log(status, headers, body);
             console.log(`[${status} ${body.length} bytes]`);
             this._resolveNextResponse(body.trim());
@@ -153,8 +153,8 @@ function loadToContainer(body) {
   bodyContainer.innerHTML = body;
 
   // Activate inert scripts
-  bodyContainer.querySelectorAll('script').forEach(oldScript => {
-    const newScript = document.createElement('script');
+  bodyContainer.querySelectorAll("script").forEach((oldScript) => {
+    const newScript = document.createElement("script");
     for (const attr of oldScript.attributes) {
       newScript.setAttribute(attr.name, attr.value);
     }
@@ -219,7 +219,7 @@ route = () => {
     httport.route("GET", document.location.hash.slice(1)).then(loadToContainer);
   }
 };
-addEventListener("hashchange", route)
+addEventListener("hashchange", route);
 
 watch();
 
