@@ -6,6 +6,8 @@ const requests = {};
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
+
+  console.log(event.request.mode);
   if (url.pathname.startsWith("/_/")) {
     event.respondWith(
       (async () => {
