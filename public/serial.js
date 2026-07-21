@@ -39,7 +39,7 @@ class HTTPort {
   }
 
   async write(text) {
-    console.log(">", text);
+    console.log(">", text.trim());
     try {
       if (!this.writer) {
         const enc = new TextEncoderStream();
