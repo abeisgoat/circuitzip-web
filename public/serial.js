@@ -6,8 +6,6 @@ class HTTPort {
   port = false;
   bytesTransferred = 0;
 
-  onRoute = () => {};
-
   setPort(port) {
     this.port = port;
   }
@@ -36,7 +34,7 @@ class HTTPort {
       await this.writePipe.catch(console.warn);
       this.writePipe = null;
     }
-    this.onRoute = () => {};
+
     await this.port.close();
   }
 
@@ -48,7 +46,7 @@ class HTTPort {
         this.writePipe = enc.readable.pipeTo(this.port.writable);
         this.writer = enc.writable.getWriter();
       }
-      await this.writer.write(text + "\n");
+      await this.writer.write(text + "\n\n");
     } catch (e) {
       console.log("Send error: " + e.message, "err");
     }
@@ -75,7 +73,6 @@ class HTTPort {
       this._resolveNextResponse = resolve;
       this._rejectNextResponse = reject;
     });
-    this.nextResponse.then(this.onRoute);
     this.nextResponse.then(this._updateLog.bind(this));
   }
 
@@ -84,23 +81,50 @@ class HTTPort {
     this.readPipe = this.port.readable.pipeTo(decoder.writable);
     this.reader = decoder.readable.getReader();
 
-    let buf = "";
+
     this.prepareNextResponse();
+
+    let status,
+        headers,
+        headerOffset = 0,
+        buf = "";
 
     while (true) {
       const { value, done } = await this.reader.read();
-      if (done) break;
+      if (done) {
+        console.log("Stream reported done.");
+        break;
+      }
       buf += value;
 
-      if (buf.endsWith("\r\n\r\n")) {
-        const chunks = buf.split("\r\n");
-        const headers = parseHeaders(chunks[0]);
-        const body = chunks.slice(1).join("\r\n").trim();
+      const chunks = buf.split(/\r\n\r\n/);
 
-        console.log(`[${body.length} bytes]`);
-        this._resolveNextResponse(body);
-        this.prepareNextResponse();
-        buf = "";
+      if (chunks.length === 2) {
+        if (!headerOffset) {
+          // console.log("setting header offset");
+          const protocolLines = chunks[0].split("\n");
+          status = protocolLines[0];
+          headers = parseHeaders(protocolLines.slice(1).join("\n"))
+          headerOffset = chunks[0].length + 4; // Plus 4 for \r\n\r\n
+        }
+
+        if (headerOffset) {
+          const body = buf.slice(headerOffset);
+          const bodyLength = new TextEncoder().encode(body).length;
+          const contentLength = parseInt(headers["content-length"], 10);
+          const newlineCount = (body.match(new RegExp("\r\n", "gi")) || []).length;
+
+          if (bodyLength-newlineCount === contentLength) {
+            // console.log(status, headers, body);
+            console.log(`[${status} ${body.length} bytes]`);
+            this._resolveNextResponse(body.trim());
+
+            buf = "";
+            status = undefined;
+            headers = undefined;
+            headerOffset = 0;
+          }
+        }
       }
     }
 
@@ -108,6 +132,7 @@ class HTTPort {
   }
 
   route(method, path) {
+    httport.prepareNextResponse();
     this.write(`${method} ${path}`);
     return this.nextResponse;
   }
@@ -115,20 +140,27 @@ class HTTPort {
 
 window.httport = new HTTPort();
 
-route = () => {
-  if (document.location.hash === "") {
-    document.location.hash = "/";
-  } else {
-    httport.route("GET", document.location.hash.slice(1));
-  }
-};
-addEventListener("hashchange", route);
-
 async function timer(ms) {
   return new Promise((_, reject) => {
     setTimeout(() => {
       reject(new Error(`Operation timed out after ${ms}ms`));
     }, ms);
+  });
+}
+
+function loadToContainer(body) {
+  const bodyContainer = document.getElementById("body-container");
+  bodyContainer.innerHTML = body;
+
+  // Activate inert scripts
+  bodyContainer.querySelectorAll('script').forEach(oldScript => {
+    const newScript = document.createElement('script');
+    for (const attr of oldScript.attributes) {
+      newScript.setAttribute(attr.name, attr.value);
+    }
+
+    newScript.textContent = oldScript.textContent;
+    oldScript.replaceWith(newScript);
   });
 }
 
@@ -151,8 +183,6 @@ async function watch() {
       const stream = httport.stream();
 
       let ok;
-      httport.onRoute = () => {};
-      httport.prepareNextResponse();
       ok = await Promise.race([
         httport.route("GET", "/_/heartbeat"),
         timer(100),
@@ -160,24 +190,20 @@ async function watch() {
         console.log(e);
       });
 
-      console.log("Ok! ==", ok);
-      if (ok !== "Ok!") {
-        httport.disconnect();
-      } else {
-        httport.onRoute = (body) => {
-          document.getElementById("page").innerHTML = body;
-        };
-        httport.prepareNextResponse();
+      if (ok === "Ok!") {
+        console.log("Okayed!");
 
-        route();
         stream.catch((e) => {
           console.warn(e);
           console.log("Stream catch, device disconnected?");
           setTimeout(watch, 1000);
-          // document.querySelector("#page").innerHTML = "";
-          // document.querySelector('#statusModal').style.display = 'grid';
         });
+
+        route();
+
         break;
+      } else {
+        console.log("Okay failed, disconnect.");
       }
     }
   } else {
@@ -186,7 +212,50 @@ async function watch() {
   }
 }
 
+route = () => {
+  if (document.location.hash === "") {
+    document.location.hash = "/";
+  } else {
+    httport.route("GET", document.location.hash.slice(1)).then(loadToContainer);
+  }
+};
+addEventListener("hashchange", route)
+
 watch();
+
+const registerServiceWorker = async () => {
+  if (!("serviceWorker" in navigator)) {
+    console.warn("No service worker support.");
+    return;
+  }
+
+  const sw = navigator.serviceWorker;
+
+  sw.addEventListener("message", async (event) => {
+    const pathname = new URL(event.data.url).pathname;
+    // const body = await event.data.body.text();
+    httport.route(event.data.method, pathname).then((body) => {
+      event.target.controller.postMessage({
+        url: event.data.url,
+        body,
+      });
+    });
+  });
+
+  const registration = await sw.register("/sw.js", {
+    scope: "/",
+  });
+
+  if (registration.installing) {
+    console.log("Service worker installing");
+  } else if (registration.waiting) {
+    console.log("Service worker installed");
+  } else if (registration.active) {
+    console.log("Service worker active");
+  }
+};
+
+registerServiceWorker();
 
 async function pair() {
   await navigator.serial.requestPort({
